@@ -10,7 +10,11 @@ Parameters:
   AllowedCidr:
     Type: String
     Default: 160.79.104.0/21
-    Description: 許可する送信元IPレンジ(既定 = Anthropic outbound)。検証時は 0.0.0.0/0 に緩める。
+    Description: 許可する送信元IPレンジ。Web利用時は 0.0.0.0/0 とCognitoを併用可能。
+  CognitoDomain:
+    Type: String
+    Default: media-log
+    Description: Cognito Hosted UIドメインのプレフィックス
 
 Resources:
   MediaLogMcpFunction:
@@ -28,11 +32,51 @@ Resources:
         Variables:
           MCP_PATH: !Ref McpPath
           ALLOWED_CIDR: !Ref AllowedCidr
+          S3_BUCKET: !Ref MediaBucket
+          S3_KEY: media.json
+          COGNITO_USER_POOL_ID: !Ref MediaUserPool
+          COGNITO_REGION: !Ref AWS::Region
+          COGNITO_CLIENT_ID: !Ref MediaUserPoolClient
+          AUTH_REQUIRED: "true"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref MediaBucket
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  MediaUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: media-log-users
+      AutoVerifiedAttributes: [email]
+  MediaUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref MediaUserPool
+      GenerateSecret: false
+      CallbackURLs:
+        - !Sub "https://${CognitoDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/idpresponse"
+      SupportedIdentityProviders: [COGNITO]
+  MediaUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomain
+      UserPoolId: !Ref MediaUserPool
 
 Outputs:
   FunctionUrl:
     Description: Function URL。末尾に MCP_PATH を付けたものが MCP エンドポイント。
     Value: !GetAtt MediaLogMcpFunctionUrl.FunctionUrl
+  UserPoolId:
+    Value: !Ref MediaUserPool
+  UserPoolClientId:
+    Value: !Ref MediaUserPoolClient
+  MediaBucketName:
+    Value: !Ref MediaBucket

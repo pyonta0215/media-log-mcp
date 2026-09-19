@@ -4,14 +4,20 @@
   "description": "メディア記録（本・映画・ゲーム）を提供する最小のMCPサーバー",
   "type": "module",
   "main": "server.mjs",
-  "scripts": {
-    "start": "node server.mjs",
-    "start:remote": "node app.mjs"
-  },
   "dependencies": {
     "@codegenie/serverless-express": "4.17.1",
+    "@aws-sdk/client-s3": "^3.850.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "express": "4.22.2",
+    "jose": "^6.0.10",
     "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.1"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.mjs",
+    "start:remote": "node app.mjs"
   }
 }
