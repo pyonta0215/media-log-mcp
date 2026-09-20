@@ -55,16 +55,17 @@ claude.ai(Web) やモバイルアプリからも使いたい場合、AWS Lambda 
 
 ### 構成
 
-- AWS Lambda + Function URL（認証なし）/ Node.js 22.x（arm64）
+- AWS Lambda + Function URL（Function URL自体はNONE、アプリ層でCognito JWT認証）/ Node.js 22.x（arm64）
 - トランスポート: Streamable HTTP（stateless、単一 JSON 応答）
 - Express アプリ（`app.mjs`）を `@codegenie/serverless-express` で Lambda ハンドラ（`lambda.mjs`）に載せる
 - ツール定義（`mcp-server.mjs`）は stdio 版とリモート版で共有
 - 費用: Lambda 無料枠内（月100万リクエスト）。API Gateway も WAF も使わないので実質 $0/月
 
-### 2段階の防御（認証なしで公開する代わり）
+### 防御
 
 1. **IP制限** — Lambda ハンドラで送信元 IP を検査し、Anthropic の outbound レンジ `160.79.104.0/21`（[公式](https://platform.claude.com/docs/en/api/ip-addresses)）以外を 403 で拒否
-2. **URL秘匿** — MCP エンドポイントのパスを推測困難なランダム文字列にする（`/mcp/<ランダム>`）。パスは環境変数 `MCP_PATH` で渡し、コードには含めない
+2. **Cognito JWT** — APIとMCPで署名・issuer・audienceを検証
+3. **URL秘匿** — MCP エンドポイントのパスを推測困難なランダム文字列にする（`/mcp/<ランダム>`）。パスは環境変数 `MCP_PATH` で渡し、コードには含めない
 
 > `books.json` 自体は公開リポジトリに含まれるため、上記はデータ機密性というより無駄なアクセス・DoS を防ぐ目的です。
 
@@ -110,8 +111,32 @@ sam deploy \
 
 ## データについて
 
-メディア種別ごとに JSON ファイルを分けて管理します。記録の追加・修正はファイルを直接編集して
-git にコミットする運用です（リモート版は再デプロイで反映）。
+### Web CRUD / S3
+
+`npm run start:remote` でWeb UI（`/`）とREST API（`/api/media`）を起動します。S3_BUCKETを設定すると
+正規化済みの `media.json`（S3_KEYで変更可）がデータストアになり、未設定時は従来のJSONファイルを読み込みます。
+S3更新はETag/条件付きPutを使うため、同時更新は409になります。初期投入は次のように行います。
+
+```bash
+S3_BUCKET=my-bucket node scripts/seed-s3.mjs
+```
+
+本番では `COGNITO_USER_POOL_ID`、`COGNITO_REGION`、`COGNITO_CLIENT_ID` と `AUTH_REQUIRED=true` を設定すると、
+APIとMCPの両方で署名・issuer・audience検証済みのCognito JWTが必須です。ローカルではCognito設定を省略すると認証を無効化できます。
+Function URLのIP制限（既定は従来どおりAnthropicのレンジ）は、Web UIを直接使う場合だけ
+`AllowedCidr=0.0.0.0/0` に変更し、必ずCognito認証を併用してください。IP制限を無効にしてもMCPにもJWT認証が適用されます。
+CORSはテンプレートで許可オリジンを設定し、無制限にはしていません。
+
+UIはHTTPS画像URLのみをブラウザ表示し、画像の保存・プロキシはしません。画像・作品情報は各サービスの
+著作権、利用規約、公開範囲を確認し、許可のない再配布や公開を行わないでください。
+
+認証付きのWeb UIでは、画面上部のJWT入力欄にCognitoのIDトークンまたはアクセストークンを設定します。
+Hosted UIの本番ログイン画面は、固定のWebオリジン（独自ドメイン等）を用意する段階で追加してください。
+ローカル認証なしの場合、CRUDの保存先はリポジトリ直下の `media.json` です。これは開発用であり、
+本番では必ずS3とCognitoを使用してください。
+
+S3を使わない従来のJSONは初期データ・バックアップとして扱います。S3へ移行した後の追加・編集・削除は
+Web UI/APIから行い、MCPは同じS3データを参照します。
 
 | 種別 | ファイル | パス上書き用の環境変数 |
 | --- | --- | --- |
