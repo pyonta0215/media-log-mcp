@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: media-log-mcp remote — Lambda Function URL + Streamable HTTP MCP (メディア記録)
+Description: media-log-mcp remote — Lambda Function URL + Streamable HTTP MCP (メディア台帳・読み取り専用) + 台帳データの S3 バケット
 
 Parameters:
   McpPath:
@@ -10,13 +10,57 @@ Parameters:
   AllowedCidr:
     Type: String
     Default: 160.79.104.0/21
-    Description: 許可する送信元IPレンジ。Web利用時は 0.0.0.0/0 とCognitoを併用可能。
-  CognitoDomain:
-    Type: String
-    Default: media-log
-    Description: Cognito Hosted UIドメインのプレフィックス
+    Description: 許可する送信元IPレンジ(既定 = Anthropic outbound)。検証時は 0.0.0.0/0 に緩める。
 
 Resources:
+  # 台帳の正本(media.json)。巻き戻しは Versioning、古い版は30日で自動削除して課金を頭打ちにする。
+  # スタックを消してもデータは残す(Retain)。
+  MediaDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            ExpiredObjectDeleteMarker: true
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  MediaDataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaDataBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt MediaDataBucket.Arn
+              - !Sub '${MediaDataBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
   MediaLogMcpFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -25,58 +69,29 @@ Resources:
       Architectures:
         - arm64
       Handler: lambda.handler
-      CodeUri: ./
+      CodeUri: dist/ # scripts/build-lambda.sh で作る。リポジトリ直下を指定しないこと
       MemorySize: 256
       Timeout: 15
       Environment:
         Variables:
           MCP_PATH: !Ref McpPath
           ALLOWED_CIDR: !Ref AllowedCidr
-          S3_BUCKET: !Ref MediaBucket
-          S3_KEY: media.json
-          COGNITO_USER_POOL_ID: !Ref MediaUserPool
-          COGNITO_REGION: !Ref AWS::Region
-          COGNITO_CLIENT_ID: !Ref MediaUserPoolClient
-          AUTH_REQUIRED: "true"
+          MEDIA_STORE: !Sub 's3://${MediaDataBucket}/media.json'
+      # リモート版は読み取り専用。台帳オブジェクトの GetObject だけを許可し、書き込み権限は持たせない
+      # (IP制限+URL秘匿は「本人である」ことを確認できないため、突破されても書けないようにする)
       Policies:
-        - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub '${MediaDataBucket.Arn}/media.json'
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
-  MediaBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-  MediaUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: media-log-users
-      AutoVerifiedAttributes: [email]
-  MediaUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      UserPoolId: !Ref MediaUserPool
-      GenerateSecret: false
-      CallbackURLs:
-        - !Sub "https://${CognitoDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/idpresponse"
-      SupportedIdentityProviders: [COGNITO]
-  MediaUserPoolDomain:
-    Type: AWS::Cognito::UserPoolDomain
-    Properties:
-      Domain: !Ref CognitoDomain
-      UserPoolId: !Ref MediaUserPool
 
 Outputs:
   FunctionUrl:
     Description: Function URL。末尾に MCP_PATH を付けたものが MCP エンドポイント。
     Value: !GetAtt MediaLogMcpFunctionUrl.FunctionUrl
-  UserPoolId:
-    Value: !Ref MediaUserPool
-  UserPoolClientId:
-    Value: !Ref MediaUserPoolClient
-  MediaBucketName:
-    Value: !Ref MediaBucket
+  MediaStore:
+    Description: 台帳データの場所。ローカルの ~/.config/media-log-mcp/env の MEDIA_STORE に設定する。
+    Value: !Sub 's3://${MediaDataBucket}/media.json'

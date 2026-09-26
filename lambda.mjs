@@ -42,7 +42,7 @@ export const handler = async (event, context) => {
   // Function URL を直叩きした場合、sourceIp は AWS が実接続元からセットする値で偽装できない
   // (X-Forwarded-For は使わない)。前段に CloudFront 等を置くと壊れる点に注意。
   const ip = event?.requestContext?.http?.sourceIp;
-  if (ALLOWED_CIDR !== "*" && ALLOWED_CIDR !== "0.0.0.0/0" && (!ip || !ipAllowed(ip))) {
+  if (!ip || !ipAllowed(ip)) {
     return {
       statusCode: 403,
       headers: { "content-type": "application/json" },

@@ -1,199 +1,136 @@
 # media-log-mcp
 
-自分が触れてきたメディアの記録（本・映画・アニメ・ゲーム）を提供する最小の MCP サーバーです。3つのツールで記録を横断検索・集計できます。読書記録は Bookmeter のエクスポートをそのまま利用します。
+自分が触れてきたメディア（本・映画・アニメ・ドラマ・ゲームなど）の個人台帳です。Claude との会話（MCP）とローカルの Web UI から、同じデータを検索・登録・編集できます。
 
-> 旧リポジトリ名は `bookmeter-mcp` です。読書記録だけの MCP から全メディア対応へ拡張したのに合わせて改名しました。
+> 旧リポジトリ名は `bookmeter-mcp` です。v0.4.0 で参照専用から書き込み可能な台帳へ移行しました。
 
-使い方は2通りあります。
+## 構成
 
-- **ローカル(stdio)** — 自分の PC の Claude Desktop / Claude Code から使う。セットアップが最も簡単。
-- **リモート(AWS Lambda)** — claude.ai(Web) やモバイルアプリからも使う。公開エンドポイントを立てる。
-
-## 提供ツール
-
-いずれも `type`（`book` / `audiobook` / `movie` / `anime` / `drama` / `variety` / `game`）で種別を絞り込めます。未指定なら全種別を横断します。
-
-- `search_media(keyword, type?, limit=20)` — タイトル・作者をキーワード検索（「これ読んだ/観た/やった?」判定用）
-- `media_by_creator(creator, type?)` — 指定した作者（著者・監督・開発元など）の記録を全件返す
-- `media_stats(type?, topCreators=10)` — 総件数・種別内訳・作者別トップN・年別件数を集計
-
-## 使い方1: ローカル(stdio)
-
-```bash
-git clone <このリポジトリのURL>
-cd media-log-mcp
-npm install
-node server.mjs
+```
+ Claude Code / Desktop ──stdio──┐
+ ローカル Web UI (127.0.0.1) ────┼── lib/service.mjs ── S3: media.json（正本・Versioning）
+ claude.ai / モバイル ──HTTPS──┘   （全入口で共通）
+        └─ リモート版は読み取り専用
 ```
 
-`node server.mjs` を実行して、エラーなく起動しプロセスが待機状態になっていれば起動確認は完了です
-（stdio 前提のサーバーなので、ターミナルで単体実行しても何も表示されずに待機し続けるのが正常動作です。
-終了する場合は Ctrl+C で止めてください）。
+- **正本は S3 の `media.json` 1ファイル**。約1MB・2,700件規模なので、全件をメモリに載せて部分一致検索する。DB は使わない（部分一致検索と噛み合わないため）
+- 書き込みは ETag を使った条件付き書き込み。別の入口が先に書いていたら最新を読み直して再適用し、黙って上書きしない
+- 巻き戻しは S3 Versioning。古い版は30日で自動削除
+- 業務ロジックは `lib/` にだけ置き、MCP（`mcp-server.mjs`）と Web UI（`web.mjs`）は入口として呼ぶだけ
 
-### Claude Desktop などMCPクライアントへの登録
+| 入口 | 書き込み | 身元の確認 |
+| --- | --- | --- |
+| ローカル stdio（`server.mjs`） | 可 | 自分のPCにログインできること |
+| ローカル Web UI（`web.mjs`） | 可 | 127.0.0.1 限定。Host 検査と独自ヘッダで他サイトからの要求を拒否 |
+| リモート（Lambda / `app.mjs`） | **不可** | IP制限＋URL秘匿のみ。本人確認にならないため書き込みツールを登録せず、IAM でも S3 の読み取りしか許可しない |
 
-npm パッケージとして公開しているわけではないため、`npx` ではなく `node` コマンドで直接起動します。
-設定ファイル（例: Claude Desktop の `claude_desktop_config.json`）に以下のように追記してください。
-`args` の値は、クローンした先の `server.mjs` への**絶対パス**に置き換えます。
+## MCP ツール
+
+`type` は `book` / `audiobook` / `movie` / `anime` / `drama` / `variety` / `game`。
+`status` は `done`（読了・鑑賞済）/ `doing`（進行中）/ `tried`（ちょい見・試遊）/ `owned`（所有・未消化）/ `want`（これから）/ `dropped`（途中でやめた）。
+
+| ツール | 内容 | リモート |
+| --- | --- | --- |
+| `search_media(keyword, type?, status?, limit=20)` | タイトル・作者で検索（「これ読んだ?」判定）。結果の `id` を編集・削除に使う | ○ |
+| `media_by_creator(creator, type?)` | 作者別の全件 | ○ |
+| `media_stats(type?, topCreators=10)` | 件数・種別・status・作者・年の集計 | ○ |
+| `discover_media(type, query, limit=5)` | 外部DBから登録候補を探す（**登録はしない**） | — |
+| `add_media(type, externalId?, status?, date?, review?, favoriteRank?, title?, …)` | 1件登録。`externalId` を渡すとタイトル・作者・URL・画像を自動で補完。同じ作品があれば登録せず既存を返す | — |
+| `update_media(id, patch)` | 部分更新。`null` でその項目を削除 | — |
+| `delete_media(id)` | 1件削除 | — |
+
+登録は「`discover_media` で候補を出す → 1件を選ぶ → `add_media` に `externalId` と自分の `status` / `date` / `review` を渡す」の2段階。上位の候補を自動で採用しないのは、同名の別作品や版違いを混ぜないため。
+
+| 種別 | 候補検索 | 必要なキー |
+| --- | --- | --- |
+| book | Google Books | `GOOGLE_BOOKS_API_KEY`（キー無しの共有枠は枯渇していて使えない） |
+| movie / anime / drama / variety | TMDB | `TMDB_API_KEY`（v3 キーか v4 トークン） |
+| game / audiobook | なし | `title` を指定して手入力 |
+
+書籍は ISBN を `isbn:978…` として持ち、既存の Amazon ASIN（`amazon:asin:…` = ISBN-10）と同じ本として重複判定する。
+
+## ローカルで使う
+
+```bash
+npm install
+```
+
+設定は**リポジトリの外**の `~/.config/media-log-mcp/env` に置く（API キーを誤ってコミット・Lambda へ同梱しないため）。`MEDIA_LOG_ENV` で場所を変えられる。
+
+```sh
+MEDIA_STORE=s3://<バケット名>/media.json   # sam deploy の出力 MediaStore
+AWS_REGION=ap-northeast-1
+GOOGLE_BOOKS_API_KEY=...                    # 任意
+TMDB_API_KEY=...                            # 任意
+```
+
+S3 へのアクセスには AWS CLI と同じ認証情報（`~/.aws`）を使う。
+
+### Claude Code / Desktop（stdio）
 
 ```json
 {
   "mcpServers": {
-    "media-log": {
-      "command": "node",
-      "args": ["/絶対パス/media-log-mcp/server.mjs"]
-    }
+    "media-log": { "command": "node", "args": ["/絶対パス/media-log-mcp/server.mjs"] }
   }
 }
 ```
 
-設定後、MCP クライアントを再起動すると `media-log` サーバーが認識され、上記3つのツールが利用できます。
+stdio 版は書き込みツールも有効。読み取り専用にしたいときは `"env": { "MEDIA_LOG_READONLY": "1" }`。
 
-## 使い方2: リモート(AWS Lambda + Function URL)
+### Web UI
 
-claude.ai(Web) やモバイルアプリからも使いたい場合、AWS Lambda に立てて「リモート MCP コネクタ」として登録します。ローカルの stdio サーバーは claude.ai(Web) からは使えないため、Web で使うにはこちらが必要です。
+```bash
+npm run web   # → http://127.0.0.1:4319
+```
 
-### 構成
+一覧・絞り込み（種別 / 状態 / 画像なし / 感想なし）・並べ替え・編集・削除・候補からの登録ができる。
 
-- AWS Lambda + Function URL（Function URL自体はNONE、アプリ層でCognito JWT認証）/ Node.js 22.x（arm64）
-- トランスポート: Streamable HTTP（stateless、単一 JSON 応答）
-- Express アプリ（`app.mjs`）を `@codegenie/serverless-express` で Lambda ハンドラ（`lambda.mjs`）に載せる
-- ツール定義（`mcp-server.mjs`）は stdio 版とリモート版で共有
-- 費用: Lambda 無料枠内（月100万リクエスト）。API Gateway も WAF も使わないので実質 $0/月
+## リモート（AWS Lambda + Function URL）
 
-### 防御
+claude.ai（Web）やモバイルアプリから検索するための読み取り専用版。
 
-1. **IP制限** — Lambda ハンドラで送信元 IP を検査し、Anthropic の outbound レンジ `160.79.104.0/21`（[公式](https://platform.claude.com/docs/en/api/ip-addresses)）以外を 403 で拒否
-2. **Cognito JWT** — APIとMCPで署名・issuer・audienceを検証
-3. **URL秘匿** — MCP エンドポイントのパスを推測困難なランダム文字列にする（`/mcp/<ランダム>`）。パスは環境変数 `MCP_PATH` で渡し、コードには含めない
-
-> `books.json` 自体は公開リポジトリに含まれるため、上記はデータ機密性というより無駄なアクセス・DoS を防ぐ目的です。
-
-### 前提
-
-- AWS アカウントと認証済みの AWS CLI
-- AWS SAM CLI
+- Lambda + Function URL（認証なし）/ Node.js 22.x（arm64）、Streamable HTTP（stateless）
+- 防御は2段: 送信元 IP を Anthropic の outbound レンジ `160.79.104.0/21` に限定し、パスを推測困難なランダム文字列にする（`MCP_PATH`）
+- 台帳は S3 から読む。warm な Lambda はメモリ上の台帳を使い回し、リクエストごとに ETag で変更の有無だけ確認する（変更が無ければ 304 で本文は転送されない）
+- 費用: Lambda・CloudFront は常時無料枠内。S3 は12ヶ月無料枠を過ぎると従量だが月 $0.01 程度
 
 ### デプロイ
 
 ```bash
-# 1. 秘匿パスを生成（出力の32文字hexをメモ）
-openssl rand -hex 16
-
-# 2. デプロイ（McpPath に /mcp/<生成した文字列> を渡す）
-sam deploy \
-  --stack-name media-log-mcp \
-  --resolve-s3 --capabilities CAPABILITY_IAM \
-  --region ap-northeast-1 \
-  --parameter-overrides 'McpPath=/mcp/<生成した文字列> AllowedCidr=160.79.104.0/21'
+openssl rand -hex 16                      # 初回のみ: 秘匿パスを生成
+npm run deploy                            # = scripts/build-lambda.sh && sam deploy
 ```
 
-デプロイ後、出力の `FunctionUrl` の末尾に秘匿パスを付けたものが MCP エンドポイントです:
-`https://xxxx.lambda-url.ap-northeast-1.on.aws/mcp/<生成した文字列>`
+初回は `sam deploy --guided` で `McpPath=/mcp/<生成した文字列>`・`AllowedCidr=160.79.104.0/21` を渡す（値は `samconfig.toml` に保存され、このファイルは `.gitignore` 済み）。
 
-| パラメータ | 意味 | 既定 |
-| --- | --- | --- |
-| `McpPath` | MCP エンドポイントの秘匿パス | (必須) |
-| `AllowedCidr` | 許可する送信元 IP レンジ | `160.79.104.0/21` |
+> `scripts/build-lambda.sh` は Lambda に必要なファイルだけを `dist/` に集める。SAM CLI は `.samignore` を読まないため、リポジトリ直下を `CodeUri` にすると `.git/` や `samconfig.toml` までパッケージに入る。
 
-> スタック名を後から変えることはできません（変えると別スタックが新規作成されて Function URL が変わり、コネクタの再登録が必要になります）。
+デプロイ後、出力の `FunctionUrl` の末尾に秘匿パスを付けたものが MCP エンドポイント。claude.ai の **Settings > Connectors > Add custom connector** に登録する（OAuth 不要）。
 
-> 自分の PC から疎通確認したいときは、一時的に `AllowedCidr` を自分のグローバル IP（`curl https://checkip.amazonaws.com` の結果）の `/32` にしてデプロイし、確認後に `160.79.104.0/21` へ戻します。本番レンジのままだと、Anthropic のクラウド経由（＝Claude から）以外はすべて 403 になります。
+## データ
 
-### claude.ai / Claude Desktop への登録
-
-1. **Settings > Connectors**（設定 > コネクタ）を開く
-2. **Add custom connector**（カスタムコネクタを追加）
-3. 上記の MCP エンドポイント URL（秘匿パス込み）を入力。認証（OAuth）は不要
-4. 追加後、チャットの「+」からコネクタを ON にして使う
-
-無料プランでも1個まで登録できます。一度登録すれば Web・モバイル・Desktop すべてで使えます（新規登録は Web / Desktop 推奨）。
-
-## データについて
-
-### Web CRUD / S3
-
-`npm run start:remote` でWeb UI（`/`）とREST API（`/api/media`）を起動します。S3_BUCKETを設定すると
-正規化済みの `media.json`（S3_KEYで変更可）がデータストアになり、未設定時は従来のJSONファイルを読み込みます。
-S3更新はETag/条件付きPutを使うため、同時更新は409になります。初期投入は次のように行います。
+旧形式（種別ごとの JSON 8ファイル）は v0.4.0 で S3 の単一台帳へ移行し、リポジトリからは削除した。移行はコミット `9aa7ecc` の JSON から再現できる（同じ入力なら ID も含めて同一の出力になる）:
 
 ```bash
-S3_BUCKET=my-bucket node scripts/seed-s3.mjs
+mkdir -p /tmp/legacy && git archive 9aa7ecc -- '*.json' ':!package*.json' | tar -x -C /tmp/legacy
+node scripts/migrate.mjs --from /tmp/legacy --out ./media.json --at 2026-09-25T00:00:00.000Z
 ```
 
-本番では `COGNITO_USER_POOL_ID`、`COGNITO_REGION`、`COGNITO_CLIENT_ID` と `AUTH_REQUIRED=true` を設定すると、
-APIとMCPの両方で署名・issuer・audience検証済みのCognito JWTが必須です。ローカルではCognito設定を省略すると認証を無効化できます。
-Function URLのIP制限（既定は従来どおりAnthropicのレンジ）は、Web UIを直接使う場合だけ
-`AllowedCidr=0.0.0.0/0` に変更し、必ずCognito認証を併用してください。IP制限を無効にしてもMCPにもJWT認証が適用されます。
-CORSはテンプレートで許可オリジンを設定し、無制限にはしていません。
+レコードの主な項目（`lib/schema.mjs`）:
 
-UIはHTTPS画像URLのみをブラウザ表示し、画像の保存・プロキシはしません。画像・作品情報は各サービスの
-著作権、利用規約、公開範囲を確認し、許可のない再配布や公開を行わないでください。
-
-認証付きのWeb UIでは、画面上部のJWT入力欄にCognitoのIDトークンまたはアクセストークンを設定します。
-Hosted UIの本番ログイン画面は、固定のWebオリジン（独自ドメイン等）を用意する段階で追加してください。
-ローカル認証なしの場合、CRUDの保存先はリポジトリ直下の `media.json` です。これは開発用であり、
-本番では必ずS3とCognitoを使用してください。
-
-S3を使わない従来のJSONは初期データ・バックアップとして扱います。S3へ移行した後の追加・編集・削除は
-Web UI/APIから行い、MCPは同じS3データを参照します。
-
-| 種別 | ファイル | パス上書き用の環境変数 |
-| --- | --- | --- |
-| 本（Bookmeter） | `books.json` | `BOOKS_JSON` |
-| 本（Kindle購入分） | `kindle-books.json` | `KINDLE_BOOKS_JSON` |
-| オーディオブック | `audiobooks.json` | `AUDIOBOOKS_JSON` |
-| 映画 | `movies.json` | `MOVIES_JSON` |
-| アニメ | `anime.json` | `ANIME_JSON` |
-| ドラマ | `dramas.json` | `DRAMAS_JSON` |
-| バラエティ | `varieties.json` | `VARIETIES_JSON` |
-| ゲーム | `games.json` | `GAMES_JSON` |
-
-### books.json（Bookmeter エクスポート形式）
-
-Bookmeter からのエクスポート形式をそのまま温存しています。読み込み時に下記の共通スキーマへ正規化されます。
-
-| フィールド | 内容 |
+| 項目 | 内容 |
 | --- | --- |
-| `t` | タイトル |
-| `a` | 著者 |
-| `d` | 日付（`"YYYY/MM/DD"` 形式の文字列、または `"日付不明"`） |
-| `r` | 感想文 |
-| `i` | Amazon画像URL |
-| `u` | Amazon商品ページURL |
+| `id` | 不変の識別子（`bk_` `mv_` などの接頭辞＋10桁） |
+| `type` / `title` | 必須。通称は `"ゼルダの伝説 ティアーズ オブ ザ キングダム (ティアキン)"` のように括弧で併記 |
+| `creator` | 著者・監督・開発元 |
+| `status` / `date` / `dateLast` / `review` / `favoriteRank` | 自分固有の情報。`date` は ISO 日付か `"2010頃"`、不明なら省略 |
+| `url` / `image` / `externalId` | 外部の情報。画像は外部 URL をそのまま持つ |
+| `source` / `platform` / `venue` / `hours` / `episodes` / `progress` / `purchasedDate` | 種別固有・取り込み元 |
+| `createdAt` / `updatedAt` | 自動 |
 
-### movies.json / anime.json / games.json（共通スキーマ）
+## テスト
 
-最初から共通スキーマで記録します。`title` 以外は省略可で、任意の追加フィールドも
-そのまま検索結果に含まれます。
-
-```json
-[
-  {
-    "title": "作品タイトル",
-    "creator": "監督・開発元など",
-    "date": "YYYY-MM-DD",
-    "review": "感想",
-    "url": "関連URL"
-  }
-]
+```bash
+npm test
 ```
-
-- `date` は「自分が観た・遊んだ時期」。日付まで不明なら `"2010頃"` のような年表記でもよい
-  （集計は文字列中の4桁年を拾う）。完全に不明なら空文字
-- 通称・略称で検索できるよう、`title` に `"ゼルダの伝説 ティアーズ オブ ザ キングダム (ティアキン)"` の
-  ように括弧で併記する（検索対象は `title` + `creator` のみのため）
-- 任意フィールドの例:
-  - `favoriteRank` — 「好きな作品トップ10」の順位（movies / games で使用）
-  - `platform` / `hours` — 機種・プレイ時間/視聴時間（games / 映像記録で使用）
-  - `status` — `played`（プレイ済み）/ `tried`（1時間以下の試遊、映像・オーディオブックでは冒頭だけのちょい見・ちょい聴き）/ `playing`（プレイ中）/ `purchased`（Kindleで購入したが読了記録なし）
-  - `dateLast` / `episodes` / `source` — 視聴期間の終端・視聴話数・記録の出典（Prime Video 視聴履歴からの取り込み分で使用。`date` は初回視聴日）
-  - `progress` — オーディオブックの聴取進捗（%。audiobooks で使用）
-  - `purchasedDate` — Kindle 購入日（読了日が `date` に入っている場合の補助。kindle-books で使用）
-
-> 同じ種別を複数ファイルに分けることもできます（`SOURCES` に同じ `type` の行を複数書く。例: `books.json` と `kindle-books.json` はどちらも `book`）。
-
-### 種別の追加
-
-新しい種別（ドラマなど）を増やす場合は、`mcp-server.mjs` の `SOURCES` に1行足して
-対応する JSON ファイルを置くだけです。
