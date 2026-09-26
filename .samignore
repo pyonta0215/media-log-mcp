@@ -1,6 +1,0 @@
-.git
-.gitignore
-.aws-sam
-samconfig.toml
-README.md
-*.log

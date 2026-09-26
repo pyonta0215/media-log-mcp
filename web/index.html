@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>メディア台帳</title>
+<style>
+  :root{
+    --paper:#F7F8F8; --surface:#FFFFFF; --ink:#1A2227; --ink2:#48555D; --muted:#7A868D;
+    --rule:#E1E6E8; --rule2:#EEF1F2; --accent:#0E6A66; --accent-soft:#E3EFEE;
+    --warn:#8F5B14; --stop:#9C3830; --stop-soft:#F7E9E7;
+    --sans:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+  button,input,select,textarea{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--rule);background:var(--surface);position:sticky;top:0;z-index:5}
+  header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.02em}
+  header .count{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+  header .spacer{flex:1}
+  .btn{border:1px solid var(--rule);background:var(--surface);padding:6px 14px;border-radius:3px;cursor:pointer}
+  .btn:hover{border-color:var(--ink2)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{filter:brightness(1.1)}
+  .btn.danger{color:var(--stop);border-color:#E8C9C5}
+  .btn.danger:hover{background:var(--stop-soft)}
+  .btn:disabled{opacity:.5;cursor:default}
+
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 420px;min-height:calc(100vh - 55px)}
+  .layout.closed{grid-template-columns:minmax(0,1fr) 0}
+  main{padding:18px 24px 60px;min-width:0}
+  aside{border-left:1px solid var(--rule);background:var(--surface);padding:22px 24px;overflow:auto;height:calc(100vh - 55px);position:sticky;top:55px}
+  .layout.closed aside{display:none}
+
+  .filters{display:grid;gap:10px;margin-bottom:14px}
+  .search{width:100%;max-width:520px;padding:8px 12px;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .chips .lbl{font-size:11.5px;color:var(--muted);margin-right:4px;min-width:3.5em}
+  .chip{border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:2px 11px;font-size:12.5px;cursor:pointer;color:var(--ink2)}
+  .chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+  .chip .n{color:var(--muted);font-variant-numeric:tabular-nums;margin-left:4px;font-size:11.5px}
+  .chip[aria-pressed="true"] .n{color:#C9D1D5}
+  select.sort{border:1px solid var(--rule);background:var(--surface);border-radius:3px;padding:3px 8px;font-size:12.5px}
+
+  ul.list{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+  ul.list li{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:14px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--rule2);cursor:pointer}
+  ul.list li:hover{background:#FAFBFB}
+  ul.list li[aria-selected="true"]{background:var(--accent-soft)}
+  .thumb{width:36px;height:50px;object-fit:cover;border-radius:2px;background:var(--rule2);display:block}
+  .thumb.none{display:grid;place-items:center;color:#B9C2C6;font-size:10px}
+  .thumb.broken{outline:2px solid var(--stop)}
+  .t{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sub .dot{margin:0 6px}
+  .st{font-size:11.5px;color:var(--ink2);white-space:nowrap;text-align:right}
+  .st .rank{color:var(--warn);font-weight:700;margin-right:8px}
+  .more{margin:14px 0;text-align:center}
+  .empty{padding:40px 0;color:var(--muted);text-align:center}
+
+  aside h2{font-size:16px;margin:0 0 4px;line-height:1.5}
+  aside .meta{font-size:12px;color:var(--muted);margin-bottom:16px;font-family:var(--mono);word-break:break-all}
+  .cover{display:block;max-width:140px;max-height:200px;border-radius:2px;margin-bottom:14px;background:var(--rule2)}
+  form.edit{display:grid;gap:11px}
+  .f{display:grid;gap:3px}
+  .f label{font-size:11.5px;color:var(--muted);letter-spacing:.03em}
+  .f input,.f select,.f textarea{border:1px solid var(--rule);border-radius:3px;padding:6px 9px;background:var(--surface);width:100%}
+  .f textarea{min-height:110px;resize:vertical;line-height:1.7}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .actions{display:flex;gap:8px;justify-content:space-between;margin-top:6px}
+  .actions .l{display:flex;gap:8px}
+  details.more-fields summary{font-size:12px;color:var(--muted);cursor:pointer;margin:2px 0 8px}
+  details.more-fields .grid{display:grid;gap:11px}
+
+  .cands{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:12px;margin:14px 0}
+  .cand{border:1px solid var(--rule);border-radius:3px;padding:8px;cursor:pointer;background:var(--surface);text-align:left;display:grid;gap:6px;align-content:start}
+  .cand:hover{border-color:var(--ink2)}
+  .cand[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .cand img,.cand .noimg{width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:2px;background:var(--rule2)}
+  .cand .ct{font-size:12.5px;font-weight:500;line-height:1.45}
+  .cand .cs{font-size:11px;color:var(--muted);line-height:1.45}
+  .cand .have{font-size:10.5px;color:var(--accent);font-weight:700}
+  .hint{font-size:12px;color:var(--muted);margin:6px 0}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 18px;border-radius:3px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+  .toast.on{opacity:1}
+  .toast.err{background:var(--stop)}
+  @media (max-width:900px){
+    .layout,.layout.closed{grid-template-columns:1fr}
+    aside{position:fixed;inset:55px 0 0 0;height:auto;border-left:none;z-index:4}
+    main{padding:14px 16px 60px}
+    header{padding:12px 16px}
+  }
+  @media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>メディア台帳</h1>
+  <span class="count" id="count"></span>
+  <span class="spacer"></span>
+  <button class="btn primary" id="addBtn" type="button">＋ 追加</button>
+</header>
+
+<div class="layout closed" id="layout">
+  <main>
+    <div class="filters">
+      <input class="search" id="q" type="search" placeholder="タイトル・作者で絞り込み" autocomplete="off">
+      <div class="chips" id="typeChips"><span class="lbl">種別</span></div>
+      <div class="chips" id="statusChips"><span class="lbl">状態</span></div>
+      <div class="chips">
+        <span class="lbl">表示</span>
+        <button class="chip" id="noImage" type="button" aria-pressed="false">画像なしのみ</button>
+        <button class="chip" id="noReview" type="button" aria-pressed="false">感想なしのみ</button>
+        <select class="sort" id="sort" aria-label="並び順">
+          <option value="date">日付の新しい順</option>
+          <option value="updated">更新の新しい順</option>
+          <option value="rank">お気に入り順位</option>
+          <option value="title">タイトル順</option>
+        </select>
+      </div>
+    </div>
+    <ul class="list" id="list"></ul>
+    <div class="more" id="more" hidden><button class="btn" type="button">さらに表示</button></div>
+  </main>
+  <aside id="panel" aria-live="polite"></aside>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+const TYPE_LABELS = { book:"本", audiobook:"オーディオブック", movie:"映画", anime:"アニメ", drama:"ドラマ", variety:"バラエティ", game:"ゲーム" };
+const DISCOVERABLE = ["book","movie","anime","drama","variety"];
+const PAGE = 200;
+const S = { records: [], meta: null, type: "", status: "", q: "", noImage: false, noReview: false, sort: "date", shown: PAGE, selected: null, broken: new Set() };
+const $ = (id) => document.getElementById(id);
+
+// ---- DOM を安全に組み立てる小道具(データは必ず textContent で入れる) ----
+function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
+  return el;
+}
+// replaceChildren は null を "null" という文字列にしてしまうので、空の要素を落としてから入れる
+const put = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k !== null && k !== undefined && k !== false));
+const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//.test(u) ? u : null);
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: opts.body ? { "Content-Type": "application/json", "X-Media-Log": "1" } : { "X-Media-Log": "1" },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+function toast(msg, err = false) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast on" + (err ? " err" : "");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => (t.className = "toast"), err ? 5000 : 2200);
+}
+
+// ---- 一覧 ----
+const norm = (s) => String(s ?? "").toLowerCase().normalize("NFKC");
+function filtered(ignore) {
+  const q = norm(S.q);
+  return S.records.filter((r) =>
+    (ignore === "type" || !S.type || r.type === S.type) &&
+    (ignore === "status" || !S.status || (S.status === "_none" ? !r.status : r.status === S.status)) &&
+    (!q || norm(`${r.title} ${r.creator ?? ""}`).includes(q)) &&
+    (!S.noImage || !r.image || S.broken.has(r.id)) &&
+    (!S.noReview || !r.review));
+}
+const SORTS = {
+  date: (a, b) => (b.date ?? "").localeCompare(a.date ?? ""),
+  updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+  rank: (a, b) => (a.favoriteRank ?? 1e9) - (b.favoriteRank ?? 1e9) || (b.date ?? "").localeCompare(a.date ?? ""),
+  title: (a, b) => a.title.localeCompare(b.title, "ja"),
+};
+
+function renderChips() {
+  const byType = countBy(filtered("type"), (r) => r.type);
+  const tc = $("typeChips");
+  tc.replaceChildren(h("span", { class: "lbl" }, "種別"),
+    chip("すべて", !S.type, sum(byType), () => { S.type = ""; rerender(); }),
+    ...S.meta.types.map((t) => chip(TYPE_LABELS[t] ?? t, S.type === t, byType[t] ?? 0, () => { S.type = t; rerender(); })));
+  const byStatus = countBy(filtered("status"), (r) => r.status ?? "_none");
+  const sc = $("statusChips");
+  sc.replaceChildren(h("span", { class: "lbl" }, "状態"),
+    chip("すべて", !S.status, sum(byStatus), () => { S.status = ""; rerender(); }),
+    ...S.meta.statuses.map((s) => chip(S.meta.statusLabels[s], S.status === s, byStatus[s] ?? 0, () => { S.status = s; rerender(); })),
+    ...(byStatus._none ? [chip("未設定", S.status === "_none", byStatus._none, () => { S.status = "_none"; rerender(); })] : []));
+}
+const countBy = (arr, f) => arr.reduce((m, x) => ((m[f(x)] = (m[f(x)] ?? 0) + 1), m), {});
+const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+const chip = (label, on, n, onclick) => h("button", { class: "chip", type: "button", "aria-pressed": on ? "true" : "false", onclick }, label, h("span", { class: "n" }, n));
+
+function thumb(r) {
+  const src = safeUrl(r.image);
+  if (!src) return h("span", { class: "thumb none", "aria-hidden": "true" }, "—");
+  return h("img", { class: "thumb" + (S.broken.has(r.id) ? " broken" : ""), src, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+    onerror: (e) => { S.broken.add(r.id); e.target.classList.add("broken"); } });
+}
+
+function renderList() {
+  const rows = filtered().sort(SORTS[S.sort]);
+  $("count").textContent = `${rows.length.toLocaleString()} / ${S.records.length.toLocaleString()} 件`;
+  const list = $("list");
+  if (!rows.length) { list.replaceChildren(h("li", { class: "empty" }, "該当する記録はありません")); $("more").hidden = true; return; }
+  list.replaceChildren(...rows.slice(0, S.shown).map((r) =>
+    h("li", { "aria-selected": S.selected === r.id ? "true" : "false", tabindex: "0",
+        onclick: () => openRecord(r.id), onkeydown: (e) => e.key === "Enter" && openRecord(r.id) },
+      thumb(r),
+      h("div", {},
+        h("div", { class: "t" }, r.title),
+        h("div", { class: "sub" }, TYPE_LABELS[r.type], r.creator ? [h("span", { class: "dot" }, "·"), r.creator] : null,
+          r.date ? [h("span", { class: "dot" }, "·"), r.date] : null)),
+      h("div", { class: "st" }, r.favoriteRank ? h("span", { class: "rank" }, `#${r.favoriteRank}`) : null,
+        r.status ? S.meta.statusLabels[r.status].split("・")[0] : "未設定"))));
+  $("more").hidden = rows.length <= S.shown;
+}
+function rerender() { S.shown = PAGE; renderChips(); renderList(); }
+
+// ---- 詳細・編集 ----
+const FIELDS_MAIN = [["status","状態"],["date","日付"],["review","感想"],["favoriteRank","お気に入り順位"]];
+const FIELDS_MORE = [["title","タイトル"],["creator","作者・監督・開発元"],["dateLast","最終日"],["url","URL"],["image","画像URL"],["platform","機種"],["venue","場所"],["hours","時間(h)"],["episodes","話数"],["progress","進捗(%)"],["source","出典"],["externalId","外部ID"]];
+const NUMERIC = new Set(["favoriteRank","hours","episodes","progress"]);
+
+function field(key, label, value) {
+  let input;
+  if (key === "status") {
+    input = h("select", { name: key, id: `f_${key}` }, h("option", { value: "" }, "未設定"),
+      ...S.meta.statuses.map((s) => h("option", { value: s, selected: value === s }, S.meta.statusLabels[s])));
+  } else if (key === "review") {
+    input = h("textarea", { name: key, id: `f_${key}` });
+    input.value = value ?? "";
+  } else {
+    input = h("input", { name: key, id: `f_${key}`, type: NUMERIC.has(key) ? "number" : "text", step: NUMERIC.has(key) ? "any" : null,
+      placeholder: key === "date" ? "YYYY-MM-DD / 2010頃" : null });
+    input.value = value ?? "";
+  }
+  return h("div", { class: "f" }, h("label", { for: `f_${key}` }, label), input);
+}
+function readForm(form, keys) {
+  const out = {};
+  for (const k of keys) {
+    const v = form.elements[k].value.trim();
+    out[k] = v === "" ? null : NUMERIC.has(k) ? Number(v) : v;
+  }
+  return out;
+}
+
+function openRecord(id) {
+  const r = S.records.find((x) => x.id === id);
+  if (!r) return;
+  S.selected = id;
+  $("layout").classList.remove("closed");
+  const cover = safeUrl(r.image);
+  const form = h("form", { class: "edit", onsubmit: (e) => { e.preventDefault(); save(r, form); } },
+    ...FIELDS_MAIN.map(([k, l]) => field(k, l, r[k])),
+    h("details", { class: "more-fields" }, h("summary", {}, "その他の項目"),
+      h("div", { class: "grid" }, ...FIELDS_MORE.map(([k, l]) => field(k, l, r[k])))),
+    h("div", { class: "actions" },
+      h("div", { class: "l" }, h("button", { class: "btn primary", type: "submit" }, "保存"),
+        h("button", { class: "btn", type: "button", onclick: closePanel }, "閉じる")),
+      h("button", { class: "btn danger", type: "button", onclick: () => remove(r) }, "削除")));
+  put($("panel"), 
+    cover ? h("img", { class: "cover", src: cover, alt: "", referrerpolicy: "no-referrer" }) : null,
+    h("h2", {}, r.title),
+    h("div", { class: "meta" }, `${TYPE_LABELS[r.type]} · ${r.id}`),
+    safeUrl(r.url) ? h("p", { class: "hint" }, h("a", { href: r.url, target: "_blank", rel: "noopener noreferrer" }, "作品ページを開く")) : null,
+    form);
+  renderList();
+}
+function closePanel() { S.selected = null; $("layout").classList.add("closed"); renderList(); }
+
+async function save(r, form) {
+  const next = readForm(form, [...FIELDS_MAIN, ...FIELDS_MORE].map(([k]) => k));
+  const patch = {};
+  for (const [k, v] of Object.entries(next)) if ((r[k] ?? null) !== v) patch[k] = v;
+  if (!Object.keys(patch).length) return toast("変更はありません");
+  try {
+    const { record } = await api(`/api/media/${encodeURIComponent(r.id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+    S.records = S.records.map((x) => (x.id === record.id ? record : x));
+    S.broken.delete(record.id);
+    toast("保存しました");
+    renderChips(); openRecord(record.id);
+  } catch (e) { toast(e.message, true); }
+}
+async function remove(r) {
+  if (!confirm(`「${r.title}」を削除します。よろしいですか？`)) return;
+  try {
+    await api(`/api/media/${encodeURIComponent(r.id)}`, { method: "DELETE", body: "{}" });
+    S.records = S.records.filter((x) => x.id !== r.id);
+    toast("削除しました");
+    closePanel(); renderChips();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---- 追加(候補を並べて目で選ぶ) ----
+function openAdd() {
+  S.selected = null;
+  $("layout").classList.remove("closed");
+  let chosen = null;
+  const typeSel = h("select", { id: "a_type" }, ...S.meta.types.map((t) => h("option", { value: t, selected: t === (S.type || "book") }, TYPE_LABELS[t])));
+  const query = h("input", { id: "a_q", type: "search", placeholder: "作品名（作者名を足すと絞り込める）" });
+  const cands = h("div", { class: "cands" });
+  const hint = h("p", { class: "hint" });
+  const detail = h("form", { class: "edit", onsubmit: (e) => { e.preventDefault(); submit(); } });
+
+  function renderDetail() {
+    const manual = !chosen;
+    put(detail, 
+      manual ? field("title", "タイトル（手入力）", "") : h("p", { class: "hint" }, "選んだ候補：", h("strong", {}, chosen.title)),
+      manual ? field("creator", "作者・監督・開発元", "") : null,
+      ...FIELDS_MAIN.map(([k, l]) => field(k, l, k === "status" ? "done" : "")),
+      h("div", { class: "actions" }, h("div", { class: "l" },
+        h("button", { class: "btn primary", type: "submit" }, "登録"),
+        h("button", { class: "btn", type: "button", onclick: closePanel }, "閉じる"))));
+  }
+  async function search() {
+    const type = typeSel.value;
+    if (!DISCOVERABLE.includes(type)) { hint.textContent = `${TYPE_LABELS[type]}は候補検索に対応していません。下の欄に手入力してください。`; cands.replaceChildren(); return; }
+    if (!query.value.trim()) return;
+    hint.textContent = "検索中…"; cands.replaceChildren(); chosen = null; renderDetail();
+    try {
+      const list = await api(`/api/discover?type=${type}&query=${encodeURIComponent(query.value.trim())}`);
+      hint.textContent = list.length ? "登録する候補を1件選んでください（上位を自動では選びません）。該当が無ければ選ばずに手入力できます。" : "候補が見つかりませんでした。下の欄に手入力できます。";
+      cands.replaceChildren(...list.map((c) => {
+        const img = safeUrl(c.image);
+        const btn = h("button", { class: "cand", type: "button", "aria-pressed": "false",
+          onclick: () => { chosen = c; cands.querySelectorAll(".cand").forEach((x) => x.setAttribute("aria-pressed", x === btn ? "true" : "false")); renderDetail(); } },
+          img ? h("img", { src: img, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : h("div", { class: "noimg" }),
+          c.alreadyRecorded ? h("span", { class: "have" }, "登録済み") : null,
+          h("span", { class: "ct" }, c.title),
+          h("span", { class: "cs" }, [c.creator, c.year].filter(Boolean).join(" · ")),
+          c.note ? h("span", { class: "cs" }, c.note) : null);
+        return btn;
+      }));
+    } catch (e) { hint.textContent = e.message; }
+  }
+  async function submit() {
+    const f = readForm(detail, FIELDS_MAIN.map(([k]) => k).concat(chosen ? [] : ["title", "creator"]));
+    const body = { type: typeSel.value, ...(chosen ? { externalId: chosen.externalId } : {}) };
+    for (const [k, v] of Object.entries(f)) if (v !== null) body[k] = v;
+    try {
+      const res = await api("/api/media", { method: "POST", body: JSON.stringify(body) });
+      if (!res.added) { toast(`既に登録されています：${res.duplicate.title}`, true); return openRecord(res.duplicate.id); }
+      S.records.push(res.record);
+      toast("登録しました");
+      rerender(); openRecord(res.record.id);
+    } catch (e) { toast(e.message, true); }
+  }
+
+  query.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); search(); } });
+  typeSel.addEventListener("change", () => { chosen = null; cands.replaceChildren(); hint.textContent = ""; renderDetail(); });
+  renderDetail();
+  put($("panel"), 
+    h("h2", {}, "記録を追加"),
+    h("div", { class: "edit" },
+      h("div", { class: "f" }, h("label", { for: "a_type" }, "種別"), typeSel),
+      h("div", { class: "f" }, h("label", { for: "a_q" }, "候補を検索"), query),
+      h("div", {}, h("button", { class: "btn", type: "button", onclick: search }, "検索"))),
+    hint, cands, detail);
+  renderList();
+  query.focus();
+}
+
+// ---- 起動 ----
+async function init() {
+  try {
+    [S.meta, { records: S.records }] = await Promise.all([api("/api/meta"), api("/api/media")]);
+  } catch (e) { toast(`読み込めませんでした：${e.message}`, true); return; }
+  let t;
+  $("q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { S.q = e.target.value; rerender(); }, 120); });
+  $("sort").addEventListener("change", (e) => { S.sort = e.target.value; renderList(); });
+  for (const id of ["noImage", "noReview"]) $(id).addEventListener("click", (e) => {
+    S[id] = !S[id]; e.currentTarget.setAttribute("aria-pressed", S[id]); rerender(); });
+  $("more").querySelector("button").addEventListener("click", () => { S.shown += PAGE; renderList(); });
+  $("addBtn").addEventListener("click", openAdd);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.selected !== undefined) closePanel(); });
+  rerender();
+}
+init();
+</script>
+</body>
+</html>
