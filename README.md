@@ -106,6 +106,8 @@ npm run deploy                            # = scripts/build-lambda.sh && sam dep
 
 > `scripts/build-lambda.sh` は Lambda に必要なファイルだけを `dist/` に集める。SAM CLI は `.samignore` を読まないため、リポジトリ直下を `CodeUri` にすると `.git/` や `samconfig.toml` までパッケージに入る。
 
+`main` に入ると GitHub Actions（`.github/workflows/deploy.yml`）が本番に反映する。`npm run deploy` は緊急用に残す。AWS へは OIDC で一時クレデンシャルを取り、Secrets は使わない（秘匿パスと `AllowedCidr` は現在のスタックの値を引き継ぐ）。初回だけ `infra/github-deploy.yaml`（ロール）を作り、GitHub の Environment `production`（main のみ）に Variables を登録する。手順は `infra/github-deploy.yaml` の冒頭と `scripts/deploy-ci.sh` を参照。
+
 デプロイ後、出力の `FunctionUrl` の末尾に秘匿パスを付けたものが MCP エンドポイント。claude.ai の **Settings > Connectors > Add custom connector** に登録する（OAuth 不要）。
 
 ## データ

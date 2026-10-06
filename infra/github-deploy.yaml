@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  media-log-mcp の GitHub Actions が AWS へデプロイするための OIDC 信頼設定と、デプロイの権限。
+  本体スタック（template.yaml）とは別に、1度だけ手で作る（デプロイする側の権限を、デプロイされる側のスタックが持たない）。
+  リポジトリの Secrets に AWS の長期アクセスキーを置かない。
+
+    aws cloudformation deploy --region ap-northeast-1 --stack-name media-log-mcp-github-deploy \
+      --template-file infra/github-deploy.yaml --capabilities CAPABILITY_NAMED_IAM
+
+  GitHub の OIDC プロバイダはアカウントに1つだけで、tabemeter-github-oidc が作ったものを使う。
+
+
+# 権限の考え方:
+#   - 変更は media-log-mcp のリソース（ARN を名指し）にだけ許す。CloudFormation は呼び出し元の権限で動くので、
+#     テンプレートを書き換えても、ここで許していないリソースは作れない
+#   - 読み取り（Get/List/Describe）は広めに許す。CloudFormation が変更セットを作るたびに各リソースの設定を読むため
+#   - Lambda の実行ロールは permissions boundary（media-log-mcp-lambda-boundary）付きでしか作れず、ポリシーも付けられない。
+#     boundary は Lambda が実際に使う権限だけ（台帳の GetObject と、ログ）で、デプロイロールからは書き換えられない。
+#     これが無いと、デプロイの資格情報から任意の権限のロールを作り、Lambda に渡して昇格できてしまう
+#   - 台帳のバケット（MediaDataBucket）はバケットの設定だけ許し、オブジェクト（media.json とその旧版）は読み書きできない
+#   - 本体スタックのリソースを作り直す（ID が変わる）変更や、新しい種類のリソースを足す変更は、先にここを更新する
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: pyonta0215
+  GitHubRepo:
+    Type: String
+    Default: media-log-mcp
+  GitHubOwnerId:
+    Type: String
+    Default: '28052193'
+    Description: オーナーの数値 ID（`gh api users/<owner> --jq .id`）
+  GitHubRepoId:
+    Type: String
+    Default: '1292565106'
+    Description: >
+      リポジトリの数値 ID（`gh api repos/<owner>/<repo> --jq .id`）。
+      このリポジトリは immutable subject で、OIDC の sub は `repo:<owner>@<owner_id>/<repo>@<repo_id>:…` になる。
+      名前だけで信頼すると、消した・改名したリポジトリの名前を別人が取ったときに信頼を引き継げてしまう
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: >
+      この Environment を指定したジョブからの実行だけを信頼する。
+      environment を持つジョブの OIDC の sub は `…:environment:<名前>` になり、ブランチを含まない。
+      main 以外から使わせないため、Environment の側で deployment branch policy を main だけにしておく
+  StackName:
+    Type: String
+    Default: media-log-mcp
+  ArtifactsBucket:
+    Type: String
+    Default: aws-sam-cli-managed-default-samclisourcebucket-7kr7fgitdfiw
+    Description: cloudformation package が Lambda のコードを置く SAM 管理のバケット（prefix media-log-mcp/ だけを使う）
+  MediaDataBucketName:
+    Type: String
+    Default: media-log-mcp-mediadatabucket-i1v3dd5srxvc
+
+Resources:
+  # Lambda の実行ロール（本体スタックの MediaLogMcpFunctionRole）が持てる権限の上限。
+  # 本体テンプレートのロールのポリシーを合わせたもの。ロール側で足しても、ここに無ければ効かない。
+  # リモート版は読み取り専用なので、台帳への書き込みもここで塞ぐ
+  LambdaBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: media-log-mcp-lambda-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: logs:CreateLogGroup
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${StackName}'
+          # CreateLogStream / PutLogEvents の対象はログストリーム（log-group:<名前>:log-stream:<名前>）
+          - Effect: Allow
+            Action: [logs:CreateLogStream, logs:PutLogEvents]
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${StackName}:log-stream:*'
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::${MediaDataBucketName}/media.json'
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${GitHubRepo}-github-deploy'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:${GitHubEnvironment}'
+      Policies:
+        - PolicyName: media-log-mcp-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ---------------------------------------------------------------- 読み取り
+              # CloudFormation が変更セットを作るときに各リソースの設定を読む。データ（S3 の中身）は含まない。
+              # Lambda は環境変数（秘匿パス）を持つので、ここでは許さず media-log-mcp の関数だけにする（Function）
+              - Sid: ReadConfig
+                Effect: Allow
+                Action:
+                  - cloudformation:Describe*
+                  - cloudformation:List*
+                  - cloudformation:Get*
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+
+              # ---------------------------------------------------------------- CloudFormation
+              # 変更セットの操作（Create/Describe/Execute/DeleteChangeSet）もスタックの ARN で認可される
+              - Sid: Stack
+                Effect: Allow
+                Action: cloudformation:*
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackName}/*'
+              # テンプレートの Transform: AWS::Serverless-2016-10-31 を使う変更セットに必要
+              - Sid: SamTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+
+              # ---------------------------------------------------------------- S3
+              - Sid: Artifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub 'arn:aws:s3:::${ArtifactsBucket}/${StackName}/*'
+              - Sid: ArtifactsList
+                Effect: Allow
+                Action: [s3:ListBucket, s3:GetBucketLocation]
+                Resource: !Sub 'arn:aws:s3:::${ArtifactsBucket}'
+              # 台帳のバケットは設定（バージョニング・暗号化・ライフサイクル・ポリシーなど）だけ。オブジェクトには触れない
+              - Sid: MediaDataBucketConfig
+                Effect: Allow
+                Action:
+                  - s3:GetBucket*
+                  - s3:Get*Configuration
+                  - s3:PutBucket*
+                  - s3:Put*Configuration
+                  - s3:DeleteBucketPolicy
+                Resource: !Sub 'arn:aws:s3:::${MediaDataBucketName}'
+
+              # ---------------------------------------------------------------- Lambda
+              # 関数名は固定（media-log-mcp）。Function URL もこの ARN で認可される
+              - Sid: Function
+                Effect: Allow
+                Action: lambda:*
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}'
+
+              # ---------------------------------------------------------------- IAM（Lambda の実行ロール）
+              - Sid: LambdaRoleRead
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
+                  - iam:TagRole
+                  - iam:UntagRole
+                  # 権限を減らす側の操作は boundary を問わない
+                  - iam:DeleteRole
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${StackName}-MediaLogMcpFunctionRole-*'
+              # 権限を増やす側の操作は、ロールに media-log-mcp-lambda-boundary が付いている（付ける）ときだけ
+              - Sid: LambdaRoleWriteWithinBoundary
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:PutRolePolicy
+                  - iam:PutRolePermissionsBoundary
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${StackName}-MediaLogMcpFunctionRole-*'
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: !Ref LambdaBoundary
+              # 付けてよいマネージドポリシーは Lambda の基本実行ロールだけ
+              - Sid: LambdaRoleAttachBasicExecution
+                Effect: Allow
+                Action: iam:AttachRolePolicy
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${StackName}-MediaLogMcpFunctionRole-*'
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: !Ref LambdaBoundary
+                    iam:PolicyARN: arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+              - Sid: LambdaRolePass
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${StackName}-MediaLogMcpFunctionRole-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+
+Outputs:
+  DeployRoleArn:
+    Description: GitHub の Environment production の Variable AWS_DEPLOY_ROLE_ARN に登録する（秘密ではない）
+    Value: !GetAtt DeployRole.Arn
+  LambdaBoundaryArn:
+    Value: !Ref LambdaBoundary
