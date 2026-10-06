@@ -131,15 +131,20 @@ Resources:
                 Effect: Allow
                 Action: [s3:ListBucket, s3:GetBucketLocation]
                 Resource: !Sub 'arn:aws:s3:::${ArtifactsBucket}'
-              # 台帳のバケットは設定（バージョニング・暗号化・ライフサイクル・ポリシーなど）だけ。オブジェクトには触れない
+              # 台帳のバケットは設定（バージョニング・暗号化・ライフサイクルなど）だけ。オブジェクトには触れない。
+              # バケットポリシーと ACL は書き換えさせない（デプロイの資格情報から media.json を読める経路になるため）。
+              # MediaDataBucketPolicy を変えるときは、手元から sam deploy する
               - Sid: MediaDataBucketConfig
                 Effect: Allow
                 Action:
                   - s3:GetBucket*
                   - s3:Get*Configuration
-                  - s3:PutBucket*
-                  - s3:Put*Configuration
-                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketVersioning
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketOwnershipControls
+                  - s3:PutBucketTagging
                 Resource: !Sub 'arn:aws:s3:::${MediaDataBucketName}'
 
               # ---------------------------------------------------------------- Lambda
