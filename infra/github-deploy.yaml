@@ -92,7 +92,12 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:${GitHubEnvironment}'
+                # このリポジトリは immutable subject 導入前に作られたため、GitHub が送る sub は名前だけの形式
+                # （repo:pyonta0215/<repo>:environment:production。2026-10-07 に CloudTrail で確認）。
+                # 将来 ID 入りの形式に切り替わっても止まらないよう、両方を受け付ける
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOwner}/${GitHubRepo}:environment:${GitHubEnvironment}'
+                  - !Sub 'repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:${GitHubEnvironment}'
       Policies:
         - PolicyName: media-log-mcp-deploy
           PolicyDocument:
