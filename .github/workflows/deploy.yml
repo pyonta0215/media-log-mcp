@@ -1,0 +1,40 @@
+name: deploy
+
+# main に入ったら scripts/deploy-ci.sh で本番（Lambda media-log-mcp）に反映する。
+# AWS へは OIDC で一時クレデンシャルを取る（infra/github-deploy.yaml）。Secrets に長期キーを置かない。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 手動実行はブランチを選べるが、main 以外は本番に出さない
+    if: github.ref == 'refs/heads/main'
+    # ロールはこの Environment を指定したジョブだけを信頼する。OIDC の sub はブランチを含まないので、
+    # Environment の deployment branch policy（main だけ）で、他のブランチから workflow を書き換えて使われるのを防ぐ
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v5
+      - run: npm ci
+      - run: npm test
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      # Lambda の組み立て（dist/）→ 変更セットで更新。秘匿パス（McpPath）と AllowedCidr は現在のスタックの値を使う
+      - run: sh scripts/deploy-ci.sh
+        env:
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}

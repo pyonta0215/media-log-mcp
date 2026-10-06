@@ -72,6 +72,9 @@ Resources:
       CodeUri: dist/ # scripts/build-lambda.sh で作る。リポジトリ直下を指定しないこと
       MemorySize: 256
       Timeout: 15
+      # GitHub Actions のデプロイロールは、この boundary 付きでしか Lambda の実行ロールを作れない
+      # （infra/github-deploy.yaml で作る。ロールが持てる権限の上限で、実際の権限は下の Policies のまま）
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/media-log-mcp-lambda-boundary'
       Environment:
         Variables:
           MCP_PATH: !Ref McpPath
