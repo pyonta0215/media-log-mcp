@@ -118,6 +118,28 @@ test("update は指定項目だけ変え、null で項目を消す", async () =>
   assert.equal(saved().find((x) => x.id === "mv_0000000001").review, "何度観ても良い");
 });
 
+test("times は回数（正の整数）。再視聴で増やし、null で消すと1回扱いに戻る", async () => {
+  const r = await rt.service.update("mv_0000000001", { times: 2, dateLast: "2026-10-16" });
+  assert.equal(r.record.times, 2);
+  assert.equal(r.record.dateLast, "2026-10-16");
+  await assert.rejects(rt.service.update("mv_0000000001", { times: 0 }), /times/);
+  await assert.rejects(rt.service.update("mv_0000000001", { times: 1.5 }), /times/);
+  assert.equal((await rt.service.update("mv_0000000001", { times: null })).record.times, undefined);
+});
+
+test("update に関数を渡すと、保存直前の最新の記録から patch を作る（競合で読み直しても作り直す）", async () => {
+  const seen = [];
+  const r = await rt.service.update("mv_0000000001", (cur) => {
+    seen.push(cur.times);
+    return { times: (cur.times ?? 1) + 1 };
+  });
+  assert.equal(r.record.times, 2);
+  const r2 = await rt.service.update("mv_0000000001", (cur) => ({ times: (cur.times ?? 1) + 1 }));
+  assert.equal(r2.record.times, 3);
+  assert.deepEqual(seen, [undefined]);
+  await assert.rejects(rt.service.update("mv_0000000001", () => ({ times: 0 })), /times/);
+});
+
 test("不正な入力は保存前に弾く", async () => {
   await assert.rejects(rt.service.update("mv_0000000001", { status: "watched" }), /status/);
   await assert.rejects(rt.service.update("mv_0000000001", { title: null }), /title/);

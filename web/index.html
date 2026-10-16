@@ -232,8 +232,8 @@ function rerender() { S.shown = PAGE; renderChips(); renderList(); }
 
 // ---- 詳細・編集 ----
 const FIELDS_MAIN = [["status","状態"],["date","日付"],["review","感想"],["favoriteRank","お気に入り順位"]];
-const FIELDS_MORE = [["title","タイトル"],["creator","作者・監督・開発元"],["dateLast","最終日"],["url","URL"],["image","画像URL"],["platform","機種"],["venue","場所"],["hours","時間(h)"],["episodes","話数"],["progress","進捗(%)"],["source","出典"],["externalId","外部ID"]];
-const NUMERIC = new Set(["favoriteRank","hours","episodes","progress"]);
+const FIELDS_MORE = [["title","タイトル"],["creator","作者・監督・開発元"],["dateLast","最終日"],["times","回数"],["url","URL"],["image","画像URL"],["platform","機種"],["venue","場所"],["hours","時間(h)"],["episodes","話数"],["progress","進捗(%)"],["source","出典"],["externalId","外部ID"]];
+const NUMERIC = new Set(["favoriteRank","times","hours","episodes","progress"]);
 
 function field(key, label, value) {
   let input;

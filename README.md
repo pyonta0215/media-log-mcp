@@ -144,7 +144,7 @@ node scripts/migrate.mjs --from /tmp/legacy --out ./media.json --at 2026-09-25T0
 | `id` | 不変の識別子（`bk_` `mv_` などの接頭辞＋10桁） |
 | `type` / `title` | 必須。通称は `"ゼルダの伝説 ティアーズ オブ ザ キングダム (ティアキン)"` のように括弧で併記 |
 | `creator` | 著者・監督・開発元 |
-| `status` / `date` / `dateLast` / `review` / `favoriteRank` | 自分固有の情報。`date` は ISO 日付か `"2010頃"`、不明なら省略 |
+| `status` / `date` / `dateLast` / `times` / `review` / `favoriteRank` | 自分固有の情報。`date` は初めて読んだ・観た日（ISO 日付か `"2010頃"`、不明なら省略）、`dateLast` は最後の日、`times` は回数（省略は1回。再読・再視聴で増やす） |
 | `url` / `image` / `externalId` | 外部の情報。画像は外部 URL をそのまま持つ |
 | `source` / `platform` / `venue` / `hours` / `episodes` / `progress` / `purchasedDate` | 種別固有・取り込み元 |
 | `createdAt` / `updatedAt` | 自動 |
