@@ -24,6 +24,24 @@
 | ローカル Web UI（`web.mjs`） | 可 | 127.0.0.1 限定。Host 検査と独自ヘッダで他サイトからの要求を拒否 |
 | リモート（Lambda / `app.mjs`） | **不可** | IP制限＋URL秘匿のみ。本人確認にならないため書き込みツールを登録せず、IAM でも S3 の読み取りしか許可しない |
 
+### ほかのリポジトリから使う
+
+`lib/` は package.json の `exports` で公開している。lifelog の投稿 Lambda（スマホから作品を登録・状態を変える）は、これを github 依存で取り込んで同じ `media.json` に書く。書き込みの規則（スキーマ・重複判定・ETag の条件付き書き込み）はここにだけ置き、取り込む側で書き直さない。
+
+```json
+"dependencies": { "media-log-mcp": "github:pyonta0215/media-log-mcp#v0.4.1" }
+```
+
+| 取り込み口 | 中身 |
+| --- | --- |
+| `media-log-mcp/service` | `createService(repo)`（検索・候補検索・登録・部分更新・削除） |
+| `media-log-mcp/repository` | `MediaRepository`（メモリキャッシュと条件付き保存のやり直し） |
+| `media-log-mcp/store` | `S3Store` / `FileStore` / `createStore(uri)` / `ConflictError` |
+| `media-log-mcp/schema` | 種別・状態の語彙と入力スキーマ |
+| `media-log-mcp/providers` | TMDB / Google Books（キーは環境変数 `TMDB_API_KEY` / `GOOGLE_BOOKS_API_KEY`） |
+
+取り込む側に書き込みを許すときは、その入口で本人確認をすること（lifelog は Cognito のアクセストークンを検証してから呼ぶ）。`exports` を変えたらバージョンを上げてタグを打つ。
+
 ## MCP ツール
 
 `type` は `book` / `audiobook` / `movie` / `anime` / `drama` / `variety` / `game`。

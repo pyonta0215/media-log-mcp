@@ -1,9 +1,17 @@
 {
   "name": "media-log-mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "メディア台帳（本・映画・アニメ・ゲーム等）を検索・登録・編集する MCP サーバーとローカル Web UI",
   "type": "module",
   "main": "server.mjs",
+  "exports": {
+    "./service": "./lib/service.mjs",
+    "./repository": "./lib/repository.mjs",
+    "./store": "./lib/store.mjs",
+    "./schema": "./lib/schema.mjs",
+    "./providers": "./lib/providers/index.mjs",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "start": "node server.mjs",
     "start:remote": "node app.mjs",
