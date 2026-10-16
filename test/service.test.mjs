@@ -127,6 +127,19 @@ test("times は回数（正の整数）。再視聴で増やし、null で消す
   assert.equal((await rt.service.update("mv_0000000001", { times: null })).record.times, undefined);
 });
 
+test("update に関数を渡すと、保存直前の最新の記録から patch を作る（競合で読み直しても作り直す）", async () => {
+  const seen = [];
+  const r = await rt.service.update("mv_0000000001", (cur) => {
+    seen.push(cur.times);
+    return { times: (cur.times ?? 1) + 1 };
+  });
+  assert.equal(r.record.times, 2);
+  const r2 = await rt.service.update("mv_0000000001", (cur) => ({ times: (cur.times ?? 1) + 1 }));
+  assert.equal(r2.record.times, 3);
+  assert.deepEqual(seen, [undefined]);
+  await assert.rejects(rt.service.update("mv_0000000001", () => ({ times: 0 })), /times/);
+});
+
 test("不正な入力は保存前に弾く", async () => {
   await assert.rejects(rt.service.update("mv_0000000001", { status: "watched" }), /status/);
   await assert.rejects(rt.service.update("mv_0000000001", { title: null }), /title/);
