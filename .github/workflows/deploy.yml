@@ -24,12 +24,12 @@ jobs:
     # Environment の deployment branch policy（main だけ）で、他のブランチから workflow を書き換えて使われるのを防ぐ
     environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
       - run: npm ci
       - run: npm test
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ap-northeast-1
