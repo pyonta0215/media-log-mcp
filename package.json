@@ -1,6 +1,6 @@
 {
   "name": "media-log-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "メディア台帳（本・映画・アニメ・ゲーム等）を検索・登録・編集する MCP サーバーとローカル Web UI",
   "type": "module",
   "main": "server.mjs",
