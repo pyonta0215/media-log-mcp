@@ -93,8 +93,22 @@ test("discover は候補を返すだけで保存せず、台帳にあるもの�
   assert.equal(c[0].image, "https://books.google.com/x"); // http → https
   assert.equal(c[0].url, "https://www.amazon.co.jp/dp/4088851749");
   assert.equal(c[1].alreadyRecorded, undefined);
+  assert.equal(c[0].externalId, "googlebooks:volume:a"); // 印は ISBN で付け、登録には volume を渡す
+  assert.equal(c[0].isbn, "9784088851747");
   assert.equal(c[1].externalId, "googlebooks:volume:b");
   assert.equal(readFileSync(path, "utf-8"), before);
+});
+
+test("ISBN で引き直せない本も、discover の externalId で登録でき、台帳には isbn: で残る", async () => {
+  const vol = { id: "v-1_x", volumeInfo: { title: "1と0の世界", authors: ["ティム・ベル"], industryIdentifiers: [{ type: "ISBN_13", identifier: "9784001152616" }] } };
+  // Google Books は q=isbn: で0件を返すことがある(日本の本で多い)。volume を id で引けば取れる
+  const calls = fakeFetch({ "q=isbn": { totalItems: 0 }, "/volumes/v-1_x": vol, "books/v1/volumes?q=": { items: [vol] } });
+  const [c] = await rt.service.discover({ type: "book", query: "はじめて出会うコンピュータ科学" });
+  const r = await rt.service.add({ type: "book", externalId: c.externalId, status: "done" });
+  assert.equal(r.added, true);
+  assert.equal(r.record.title, "1と0の世界");
+  assert.equal(r.record.externalId, "isbn:9784001152616");
+  assert.ok(!calls.some((u) => u.includes("q=isbn")));
 });
 
 test("Provider が無い種別の discover は手入力を案内する", async () => {
