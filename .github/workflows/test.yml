@@ -1,0 +1,28 @@
+name: test
+
+# PR（Dependabot の更新を含む）をマージ前に確かめる。公開リポジトリなので、
+# このジョブには AWS の権限も Secrets も渡さない。デプロイは deploy.yml だけが行う。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      - run: npm ci
+      - run: npm test
+      # Lambda の組み立てが壊れていないか（AWS には触れない）
+      - run: sh scripts/build-lambda.sh
